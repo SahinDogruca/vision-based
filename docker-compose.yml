@@ -1,0 +1,29 @@
+services:
+  vision-landing:
+    image: vision-landing
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python /workdir/main.py --input_dir CYUL_06L_35
+    # command: python -m debugpy --wait-for-client --listen ${SERVER_HOST}:${DEBUG_PORT} /workdir/main.py --input_dir CYUL_06L_35
+    env_file:
+      - .env
+    volumes:
+      - ./inputs:/workdir/inputs
+      - ./outputs:/workdir/outputs
+      - ./models:/workdir/models
+      - ./LoRAT:/workdir/LoRAT
+      - ./LoRAT/trackit/datasets/cache:/workdir/LoRAT/trackit/datasets/cache
+    ports:
+      - ${SERVER_PORT}:${SERVER_PORT}
+      - ${DEBUG_PORT}:${DEBUG_PORT}
+    shm_size: 8g
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: "nvidia"
+            count: 1
+            capabilities: [gpu]
+    tty: true
+    stdin_open: true

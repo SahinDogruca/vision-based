@@ -1,0 +1,5 @@
+inputs/*
+models/*
+outputs/*
+LoRAT/trackit/datasets/cache/*
+*/__pycache__/*
