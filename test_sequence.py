@@ -171,21 +171,57 @@ def estimate_pose_single(keypoints_6, airport, runway, runway_data_path, mtx, di
     objp = build_3d_object_points(aspect_ratio)
     imgp = keypoints_6[0].astype(np.float32)
 
-    success, rvecs, tvecs = cv2.solvePnP(objp, imgp, mtx, dist)
-    if not success:
-        return None, None, None, None, False
+    # Extract the 4 corner points (indices 0, 2, 3, 5) to use IPPE
+    objp_4 = objp[0, [0, 2, 3, 5]]
+    imgp_4 = imgp[[0, 2, 3, 5]]
 
-    ypr = rotation_vector_to_euler_angles(rvecs)
-    ypr[0] += yaw_offset
-    ypr[2] += np.pi
-    ypr[2] = -normalize_angle(ypr[2])
+    # solvePnPGeneric with IPPE guarantees the 2 best solutions
+    success, rvecs_list, tvecs_list, _ = cv2.solvePnPGeneric(
+        objp_4, imgp_4, mtx, dist, flags=cv2.SOLVEPNP_IPPE
+    )
+    best_rvec = None
+    best_tvec = None
+    
+    # Select the solution where the camera pitch is positive (not upside down)
+    for rvec, tvec in zip(rvecs_list, tvecs_list):
+        if np.isnan(rvec).any() or np.isnan(tvec).any():
+            continue
+            
+        ypr = rotation_vector_to_euler_angles(rvec)
+        ypr[0] += yaw_offset
+        ypr[2] += np.pi
+        ypr[2] = -normalize_angle(ypr[2])
+        
+        pitch_deg = np.degrees(ypr[1])
+        if pitch_deg > 0:
+            best_rvec = rvec
+            best_tvec = tvec
+            break
 
-    yaw_deg = np.degrees(ypr[0])
-    pitch_deg = np.degrees(ypr[1])
-    roll_deg = np.degrees(ypr[2])
+    if best_rvec is None:
+        best_rvec = rvecs_list[0]
+        best_tvec = tvecs_list[0]
+        if np.isnan(best_rvec).any():
+            return None, None, None, None, False
+
+    # Refine with iterative solver on all 6 points
+    success, best_rvec, best_tvec = cv2.solvePnP(
+        objp, imgp, mtx, dist,
+        rvec=best_rvec.copy(), tvec=best_tvec.copy(),
+        useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE
+    )
+
+    best_ypr = rotation_vector_to_euler_angles(best_rvec)
+    best_ypr[0] += yaw_offset
+    best_ypr[2] += np.pi
+    best_ypr[2] = -normalize_angle(best_ypr[2])
+
+    yaw_deg = np.degrees(best_ypr[0])
+    pitch_deg = np.degrees(best_ypr[1])
+    roll_deg = np.degrees(best_ypr[2])
 
     slant_nm = np.sqrt(
-        tvecs[0, 0]**2 + tvecs[1, 0]**2 + tvecs[2, 0]**2
+        best_tvec[0, 0]**2 + best_tvec[1, 0]**2 + best_tvec[2, 0]**2
     ) * runway_width / METERS_PER_NM
 
     return yaw_deg, pitch_deg, roll_deg, slant_nm, True
@@ -200,21 +236,57 @@ def estimate_pose_raw(imgpoints_6x1x2, objp, mtx, dist, runway_width, yaw_offset
     Used by the geometric test where we control everything directly.
     """
     imgp = imgpoints_6x1x2.astype(np.float32)
-    success, rvecs, tvecs = cv2.solvePnP(objp, imgp, mtx, dist)
-    if not success:
-        return None, None, None, None, False
+    
+    # Extract the 4 corner points (indices 0, 2, 3, 5) to use IPPE
+    objp_4 = objp[0, [0, 2, 3, 5]]
+    imgp_4 = imgp[[0, 2, 3, 5]]
 
-    ypr = rotation_vector_to_euler_angles(rvecs)
-    ypr[0] += yaw_offset_rad
-    ypr[2] += np.pi
-    ypr[2] = -normalize_angle(ypr[2])
+    success, rvecs_list, tvecs_list, _ = cv2.solvePnPGeneric(
+        objp_4, imgp_4, mtx, dist, flags=cv2.SOLVEPNP_IPPE
+    )
+    best_rvec = None
+    best_tvec = None
+    
+    # Select the solution where the camera pitch is positive (not upside down)
+    for rvec, tvec in zip(rvecs_list, tvecs_list):
+        if np.isnan(rvec).any() or np.isnan(tvec).any():
+            continue
+            
+        ypr = rotation_vector_to_euler_angles(rvec)
+        ypr[0] += yaw_offset_rad
+        ypr[2] += np.pi
+        ypr[2] = -normalize_angle(ypr[2])
+        
+        pitch_deg = np.degrees(ypr[1])
+        if pitch_deg > 0:
+            best_rvec = rvec
+            best_tvec = tvec
+            break
 
-    yaw_deg = np.degrees(ypr[0])
-    pitch_deg = np.degrees(ypr[1])
-    roll_deg = np.degrees(ypr[2])
+    if best_rvec is None:
+        best_rvec = rvecs_list[0]
+        best_tvec = tvecs_list[0]
+        if np.isnan(best_rvec).any():
+            return None, None, None, None, False
+
+    # Refine with iterative solver on all 6 points
+    success, best_rvec, best_tvec = cv2.solvePnP(
+        objp, imgp, mtx, dist,
+        rvec=best_rvec.copy(), tvec=best_tvec.copy(),
+        useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE
+    )
+
+    best_ypr = rotation_vector_to_euler_angles(best_rvec)
+    best_ypr[0] += yaw_offset_rad
+    best_ypr[2] += np.pi
+    best_ypr[2] = -normalize_angle(best_ypr[2])
+
+    yaw_deg = np.degrees(best_ypr[0])
+    pitch_deg = np.degrees(best_ypr[1])
+    roll_deg = np.degrees(best_ypr[2])
 
     slant_nm = np.sqrt(
-        tvecs[0, 0]**2 + tvecs[1, 0]**2 + tvecs[2, 0]**2
+        best_tvec[0, 0]**2 + best_tvec[1, 0]**2 + best_tvec[2, 0]**2
     ) * runway_width / METERS_PER_NM
 
     return yaw_deg, pitch_deg, roll_deg, slant_nm, True
@@ -812,7 +884,7 @@ def run_full_pipeline(args, repo_root):
         try:
             keypoints, crop_data = main_keypoints(pred_x, pred_y, pred_w, pred_h, image_path)
 
-            if keypoints is None:
+            if keypoints is None or len(keypoints) == 0:
                 print(f"    [WARN] Frame {i}: YOLO detected no keypoints")
                 continue
 
